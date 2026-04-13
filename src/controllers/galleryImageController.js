@@ -27,7 +27,18 @@ export const createGallery = async (req, res) => {
 
     const imageUrls = await Promise.all(uploadPromises);
 
-    const slug = slugify(category || "");
+    let slug = slugify(category || "gallery-image");
+    
+    // Check if slug exists to prevent duplicate key error
+    let existingSlug = await GalleryImage.findOne({ slug });
+    let counter = 1;
+    let originalSlug = slug;
+    while (existingSlug) {
+      slug = `${originalSlug}-${counter}`;
+      existingSlug = await GalleryImage.findOne({ slug });
+      counter++;
+    }
+
     const galleryImage = await GalleryImage.create({
       category,
       slug,
@@ -83,12 +94,17 @@ export const updateGallery = async (req, res) => {
     let finalImages = gallery.images;
 
     // Check for existing images to keep
-    if (req.body.existing_images) {
+    if (req.body.existing_images !== undefined) {
       try {
         const existing = typeof req.body.existing_images === "string"
           ? JSON.parse(req.body.existing_images)
           : req.body.existing_images;
-        finalImages = Array.isArray(existing) ? existing : [existing];
+
+        const parsedExisting = Array.isArray(existing) ? existing : [existing];
+        finalImages = parsedExisting.map(item => {
+          if (typeof item === 'string') return { url: item, alt: req.body.image_alt || "" };
+          return item;
+        });
       } catch (e) {
         // Fallback if parsing fails
       }
@@ -115,10 +131,38 @@ export const updateGallery = async (req, res) => {
       finalImages = [...finalImages, ...newImageObjects];
     }
 
+    // Identify images to delete from Cloudinary
+    if (gallery.images && gallery.images.length > 0) {
+      const imagesToDelete = gallery.images.filter(img =>
+        !finalImages.some(fImg => fImg.url === img.url)
+      );
+
+      if (imagesToDelete.length > 0) {
+        const deletePromises = imagesToDelete.map(img => {
+          const imgURL = img.url;
+          if (!imgURL) return Promise.resolve();
+          const publicId = imgURL.split("/").pop().split(".")[0];
+          return cloudinary.uploader.destroy(`gallery_images/${publicId}`);
+        });
+        await Promise.all(deletePromises);
+      }
+    }
+
     // Update metadata
     gallery.category = req.body.category || gallery.category;
     if (req.body.category) {
-      gallery.slug = slugify(req.body.category);
+      let slug = slugify(req.body.category);
+      if (slug !== gallery.slug) {
+        let existingSlug = await GalleryImage.findOne({ slug, _id: { $ne: gallery._id } });
+        let counter = 1;
+        let originalSlug = slug;
+        while (existingSlug) {
+          slug = `${originalSlug}-${counter}`;
+          existingSlug = await GalleryImage.findOne({ slug, _id: { $ne: gallery._id } });
+          counter++;
+        }
+        gallery.slug = slug;
+      }
     }
     gallery.status = req.body.status || gallery.status;
     gallery.images = finalImages;
@@ -145,7 +189,9 @@ export const deleteGallery = async (req, res) => {
 
     // Delete all images from Cloudinary
     if (gallery.images && gallery.images.length > 0) {
-      const deletePromises = gallery.images.map(imgURL => {
+      const deletePromises = gallery.images.map(img => {
+        const imgURL = typeof img === 'string' ? img : img.url;
+        if (!imgURL) return Promise.resolve();
         const publicId = imgURL.split("/").pop().split(".")[0];
         return cloudinary.uploader.destroy(`gallery_images/${publicId}`);
       });
