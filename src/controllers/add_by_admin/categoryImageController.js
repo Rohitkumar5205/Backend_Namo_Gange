@@ -17,11 +17,10 @@ export const createCategoryImage = async (req, res) => {
         })
         .end(req.file.buffer);
     });
-    const slug = slugify(req.body.title);
+    const slug = req.body.slug || slugify(req.body.title);
     const categoryImage = await CategoryImage.create({
       title: req.body.title,
-      slug, // 🔥 auto slug
-      slug: req.body.slug,
+      slug,
       category: req.body.category,
       order_by: req.body.order_by,
       status: req.body.status,

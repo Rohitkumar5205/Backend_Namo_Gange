@@ -6,6 +6,7 @@ const CategoryImageSchema = new mongoose.Schema(
     slug: {
       type: String,
       unique: true,
+      required: true,
       lowercase: true,
       index: true,
     },
